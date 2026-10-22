@@ -1,0 +1,1182 @@
+{
+  "name": "AI Candidate Screening Agent - LLM Only",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Job Application",
+        "formDescription": "Apply to Optimity Logics. Please fill in your details and upload your resume (PDF). Your application is reviewed by our recruitment team.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Full Name",
+              "placeholder": "e.g. Arjun Shah",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Email",
+              "fieldType": "email",
+              "placeholder": "you@example.com",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Phone",
+              "placeholder": "e.g. +91 90000 12345",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Resume PDF",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            },
+            {
+              "fieldName": "job_id",
+              "fieldType": "hiddenField"
+            }
+          ]
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "cd99ae0c-4c28-4911-ae87-6c2c82861af6",
+      "name": "Candidate Application Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        944
+      ],
+      "webhookId": "",
+      "notesInFlow": true,
+      "notes": "Candidate opens: <form production URL>?job_id=JOB-001 . The hidden field job_id is filled from the link."
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Resume_PDF",
+        "options": {}
+      },
+      "id": "fad7bff5-7fbb-4cb8-aa4c-550ff34400ee",
+      "name": "Extract Resume Text from PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_SPREADSHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Recruiter",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_SPREADSHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 984303820,
+          "mode": "list",
+          "cachedResultName": "Jobs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_SPREADSHEET_ID/edit"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Job ID",
+              "lookupValue": "={{ $('Candidate Application Form').first().json.job_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "740638bc-a1f7-49f4-8c3e-4a7290a48c27",
+      "name": "Get Job Details",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        944
+      ],
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "notes": "Looks up Job Title, Job Description and Required Experience from the 'Jobs' tab using the job_id from the application link."
+    },
+    {
+      "parameters": {
+        "jsCode": "const form = $('Candidate Application Form').first().json ?? {};\nconst ext = $('Extract Resume Text from PDF').first().json ?? {};\nconst job = $('Get Job Details').first().json ?? {};\n\nconst resumeText = ext.text ?? ext.extractedText ?? ext.data ?? '';\nconst jobId = String(form.job_id ?? form['Job ID'] ?? '').trim();\n\nif (!job['Job ID']) {\n  throw new Error(`Job ID \"${jobId}\" was not found in the Jobs tab. Check the application link (?job_id=...) and the Jobs sheet.`);\n}\nif (String(job['Status'] ?? 'Open').trim().toLowerCase() !== 'open') {\n  throw new Error(`Job ${jobId} is not Open in the Jobs tab (Status = ${job['Status']}).`);\n}\nif (!String(resumeText).trim()) {\n  throw new Error('No text was extracted from the PDF. Check the uploaded PDF and the Extract From File binary property name. Scanned PDFs may require OCR.');\n}\n\nconst jobTitle = job['Job Title'] ?? '';\nconst jobDescription = job['Job Description'] ?? '';\nconst requiredExperience = job['Required Experience'] || 'Not specified';\n\nconst candidateName = String(form['Full Name'] ?? '').trim();\nconst candidateEmail = String(form['Email'] ?? '').trim();\nconst candidatePhone = String(form['Phone'] ?? '').trim();\n\nconst prompt = `You are a careful recruitment screening assistant. Analyze only job-related evidence. Do not use or infer age, gender, race, religion, disability, nationality, photo, family status, or any other protected/personal characteristic. Do not make a hiring decision or automatically reject a candidate. Do not invent missing facts. If the resume does not demonstrate a requirement, label it as \"not demonstrated\" rather than claiming the candidate lacks the skill. Return ONLY valid JSON matching the requested structure.\n\nJOB TITLE: ${jobTitle}\nREQUIRED EXPERIENCE: ${requiredExperience}\nJOB DESCRIPTION:\n${jobDescription}\n\nRESUME TEXT:\n${String(resumeText).slice(0, 45000)}\n\nReturn this JSON structure:\n{\n  \"candidate_profile\": {\n    \"full_name\": string|null, \"email\": string|null, \"phone\": string|null, \"skills\": string[], \"experience_summary\": string, \"estimated_relevant_experience_years\": number|null, \"education\": string[], \"projects\": string[]\n  },\n  \"requirements_analysis\": {\n    \"matching_skills\": [{\"skill\": string, \"resume_evidence\": string}],\n    \"not_demonstrated_or_unverified\": [{\"requirement\": string, \"reason\": string}],\n    \"experience_evidence\": string, \"project_evidence\": string, \"certification_evidence\": string, \"certifications_applicable\": boolean,\n    \"skill_score\": number, \"experience_score\": number, \"project_score\": number, \"certification_score\": number\n  },\n  \"review_summary\": string, \"questions_for_recruiter\": string[]\n}\nScores must be numbers from 0 to 100 and based on evidence in the resume versus the job-related requirements. Do not score protected characteristics. If certifications are not required in the job description, set certifications_applicable to false. The scores are decision-support estimates, not a final hiring recommendation.`;\n\nreturn [{ json: { jobId, jobTitle, jobDescription, requiredExperience, candidateName, candidateEmail, candidatePhone, resumeText: String(resumeText), prompt } }];"
+      },
+      "id": "41104607-8d04-4e07-9b9d-f8c53f881478",
+      "name": "Prepare Screening Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        2192,
+        944
+      ],
+      "id": "3566f289-9345-4b7c-830d-ec94825f5e90",
+      "name": "Message a model",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst source = $('Prepare Screening Prompt').first().json;\n\nconst gParts = item?.candidates?.[0]?.content?.parts ?? item?.content?.parts ?? [];\nlet raw = gParts.filter(p => !p.thought).map(p => p.text ?? '').join('\\n');\nif (!raw && typeof item?.text === 'string') raw = item.text;\nif (!raw) throw new Error('Gemini returned no text. keys: ' + Object.keys(item ?? {}).join(','));\n\nraw = raw.trim().replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/\\s*```$/, '');\n\nlet analysis;\ntry { analysis = JSON.parse(raw); }\ncatch (e) { throw new Error('Could not parse Gemini JSON response. Details: ' + e.message); }\n\nconst profile = analysis.candidate_profile ?? {};\nconst a = analysis.requirements_analysis ?? {};\nconst clamp = n => Math.max(0, Math.min(100, Number(n) || 0));\n\n// ---- transparent weighted score ----\nconst parts = [\n  { key: 'skill_score', weight: 0.50 },\n  { key: 'experience_score', weight: 0.25 },\n  { key: 'project_score', weight: 0.15 },\n  { key: 'certification_score', weight: 0.10 }\n].filter(x => x.key !== 'certification_score' || a.certifications_applicable !== false);\n\nconst weightTotal = parts.reduce((s, x) => s + x.weight, 0);\nconst matchScore = Math.round(parts.reduce((s, x) => s + clamp(a[x.key]) * x.weight, 0) / (weightTotal || 1));\nconst reviewStatus = matchScore >= 75 ? 'Priority Review' : matchScore >= 50 ? 'Standard Review' : 'Further Review';\n\n// ---- candidate experience (years) ----\nlet candidateYears = profile.estimated_relevant_experience_years ?? a.candidate_experience_years ?? a.experience_years ?? profile.total_experience_years ?? profile.experience_years ?? '';\nif (candidateYears === '' || candidateYears === null) {\n  const m = String(profile.experience_summary ?? '').match(/(\\d+(?:\\.\\d+)?)\\s*(?:\\+)?\\s*(?:years?|yrs?)/i);\n  candidateYears = m ? Number(m[1]) : '';\n}\n\n// ---- resume file name ----\nlet resumeFileName = '';\ntry {\n  const bin = $('Candidate Application Form').first().binary ?? {};\n  const firstKey = Object.keys(bin)[0];\n  resumeFileName = firstKey ? (bin[firstKey].fileName ?? '') : '';\n} catch (e) {}\n\nconst submittedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });\nconst applicationId = 'APP-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase();\n\nconst missing = (a.not_demonstrated_or_unverified ?? []).map(x => `${x.requirement}: ${x.reason}`).join(' | ');\nconst matching = (a.matching_skills ?? []).map(x => x.skill).join(', ');\nconst questions = (analysis.questions_for_recruiter ?? []).join(' | ');\nconst certScore = a.certifications_applicable === false ? 'N/A' : clamp(a.certification_score);\nconst skills = (profile.skills ?? []).join(', ');\n\n// candidate-entered details are more reliable than AI-extracted ones\nconst candidateName = source.candidateName || profile.full_name || 'Not provided';\nconst candidateEmail = source.candidateEmail || profile.email || '';\nconst candidatePhone = source.candidatePhone || profile.phone || '';\n\nconst scoreBreakdownText =\n  `Skills: ${clamp(a.skill_score)}% (weight 50%)\\n` +\n  `Experience: ${clamp(a.experience_score)}% (weight 25%)\\n` +\n  `Projects: ${clamp(a.project_score)}% (weight 15%)\\n` +\n  `Certifications: ${certScore === 'N/A' ? 'Not applicable (weight redistributed)' : certScore + '% (weight 10%)'}`;\n\nreturn [{\n  json: {\n    // ---- exact Google Sheet headers ----\n    'Application ID': applicationId,\n    'Candidate Name': candidateName,\n    'Job Title': source.jobTitle,\n    'Overall Match Score (%)': matchScore,\n    'Review Priority': reviewStatus,\n    'Recruiter Review Status': 'Pending',\n    'Email': candidateEmail,\n    'Phone': candidatePhone,\n    'Job ID': source.jobId,\n    'Submitted At': submittedAt,\n    'Skills Match (%)': clamp(a.skill_score),\n    'Experience Match (%)': clamp(a.experience_score),\n    'Projects Match (%)': clamp(a.project_score),\n    'Certifications Match (%)': certScore,\n    'Required Experience (Years)': source.requiredExperience,\n    'Candidate Experience (Years)': candidateYears,\n    'Candidate Skills': skills,\n    'Matching Skills': matching,\n    'Missing / Not Demonstrated Requirements': missing,\n    'Relevant Projects': a.project_evidence ?? '',\n    'AI Screening Summary': analysis.review_summary ?? '',\n    'Recruiter Notes': questions,\n    'Job Description': source.jobDescription,\n    'Resume File Name': resumeFileName,\n    'Candidate Notified': 'No',\n    'Decision Date': '',\n\n    // ---- helper fields for emails / IF ----\n    applicationId, candidateName, candidateEmail, candidatePhone,\n    jobId: source.jobId, jobTitle: source.jobTitle, requiredExperience: source.requiredExperience,\n    candidateExperienceYears: candidateYears,\n    matchScore, reviewStatus, skills,\n    matchingSkills: matching, missingOrUnverified: missing,\n    experienceSummary: profile.experience_summary ?? '',\n    experienceEvidence: a.experience_evidence ?? '',\n    projectEvidence: a.project_evidence ?? '',\n    certificationEvidence: a.certification_evidence ?? '',\n    reviewSummary: analysis.review_summary ?? '',\n    recruiterQuestions: questions,\n    resumeFileName, scoreBreakdownText,\n    rawAnalysis: JSON.stringify(analysis)\n  }\n}];"
+      },
+      "id": "effa93dc-1c89-4c3d-8999-b615223faf87",
+      "name": "Parse Analysis and Calculate Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "27e760aa-a778-43e6-83ef-1506091353e0",
+              "leftValue": "={{ $json.matchScore }}",
+              "rightValue": 50,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b3672337-374d-47b4-b0bd-42c1de843191",
+      "name": "Shortlist Check (Score >= 50)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2720,
+        944
+      ],
+      "notesInFlow": true,
+      "notes": "Score 50+ goes to the Shortlisted tab and needs recruiter approval. Below 50 is only logged in 'Further Review' (never auto-rejected, no email). Change 50 here to move the threshold."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_SPREADSHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Recruiter",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_SPREADSHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Shortlisted"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Application ID": "={{ $json['Application ID'] }}",
+            "Candidate Name": "={{ $json['Candidate Name'] }}",
+            "Job Title": "={{ $json['Job Title'] }}",
+            "Overall Match Score (%)": "={{ $json['Overall Match Score (%)'] }}",
+            "Review Priority": "={{ $json['Review Priority'] }}",
+            "Recruiter Review Status": "={{ $json['Recruiter Review Status'] }}",
+            "Email": "={{ $json['Email'] }}",
+            "Phone": "={{ $json['Phone'] }}",
+            "Job ID": "={{ $json['Job ID'] }}",
+            "Submitted At": "={{ $json['Submitted At'] }}",
+            "Skills Match (%)": "={{ $json['Skills Match (%)'] }}",
+            "Experience Match (%)": "={{ $json['Experience Match (%)'] }}",
+            "Projects Match (%)": "={{ $json['Projects Match (%)'] }}",
+            "Certifications Match (%)": "={{ $json['Certifications Match (%)'] }}",
+            "Required Experience (Years)": "={{ $json['Required Experience (Years)'] }}",
+            "Candidate Experience (Years)": "={{ $json['Candidate Experience (Years)'] }}",
+            "Candidate Skills": "={{ $json['Candidate Skills'] }}",
+            "Matching Skills": "={{ $json['Matching Skills'] }}",
+            "Missing / Not Demonstrated Requirements": "={{ $json['Missing / Not Demonstrated Requirements'] }}",
+            "Relevant Projects": "={{ $json['Relevant Projects'] }}",
+            "AI Screening Summary": "={{ $json['AI Screening Summary'] }}",
+            "Recruiter Notes": "={{ $json['Recruiter Notes'] }}",
+            "Job Description": "={{ $json['Job Description'] }}",
+            "Resume File Name": "={{ $json['Resume File Name'] }}",
+            "Candidate Notified": "={{ $json['Candidate Notified'] }}",
+            "Decision Date": "={{ $json['Decision Date'] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Application ID",
+              "displayName": "Application ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Name",
+              "displayName": "Candidate Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Overall Match Score (%)",
+              "displayName": "Overall Match Score (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Review Priority",
+              "displayName": "Review Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recruiter Review Status",
+              "displayName": "Recruiter Review Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job ID",
+              "displayName": "Job ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Submitted At",
+              "displayName": "Submitted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Skills Match (%)",
+              "displayName": "Skills Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Experience Match (%)",
+              "displayName": "Experience Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Projects Match (%)",
+              "displayName": "Projects Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Certifications Match (%)",
+              "displayName": "Certifications Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Required Experience (Years)",
+              "displayName": "Required Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Experience (Years)",
+              "displayName": "Candidate Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Skills",
+              "displayName": "Candidate Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Matching Skills",
+              "displayName": "Matching Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Missing / Not Demonstrated Requirements",
+              "displayName": "Missing / Not Demonstrated Requirements",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Relevant Projects",
+              "displayName": "Relevant Projects",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "AI Screening Summary",
+              "displayName": "AI Screening Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recruiter Notes",
+              "displayName": "Recruiter Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Description",
+              "displayName": "Job Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Resume File Name",
+              "displayName": "Resume File Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Notified",
+              "displayName": "Candidate Notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Decision Date",
+              "displayName": "Decision Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "bc490730-abb1-4071-a4c1-9a671407036a",
+      "name": "Save to Shortlisted Tab",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2976,
+        784
+      ],
+      "notesInFlow": true,
+      "notes": "Adds the candidate to the 'Shortlisted' tab with Recruiter Review Status = Pending."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_SPREADSHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Recruiter",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_SPREADSHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Further Review"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Application ID": "={{ $json['Application ID'] }}",
+            "Candidate Name": "={{ $json['Candidate Name'] }}",
+            "Job Title": "={{ $json['Job Title'] }}",
+            "Overall Match Score (%)": "={{ $json['Overall Match Score (%)'] }}",
+            "Review Priority": "={{ $json['Review Priority'] }}",
+            "Recruiter Review Status": "={{ $json['Recruiter Review Status'] }}",
+            "Email": "={{ $json['Email'] }}",
+            "Phone": "={{ $json['Phone'] }}",
+            "Job ID": "={{ $json['Job ID'] }}",
+            "Submitted At": "={{ $json['Submitted At'] }}",
+            "Skills Match (%)": "={{ $json['Skills Match (%)'] }}",
+            "Experience Match (%)": "={{ $json['Experience Match (%)'] }}",
+            "Projects Match (%)": "={{ $json['Projects Match (%)'] }}",
+            "Certifications Match (%)": "={{ $json['Certifications Match (%)'] }}",
+            "Required Experience (Years)": "={{ $json['Required Experience (Years)'] }}",
+            "Candidate Experience (Years)": "={{ $json['Candidate Experience (Years)'] }}",
+            "Candidate Skills": "={{ $json['Candidate Skills'] }}",
+            "Matching Skills": "={{ $json['Matching Skills'] }}",
+            "Missing / Not Demonstrated Requirements": "={{ $json['Missing / Not Demonstrated Requirements'] }}",
+            "Relevant Projects": "={{ $json['Relevant Projects'] }}",
+            "AI Screening Summary": "={{ $json['AI Screening Summary'] }}",
+            "Recruiter Notes": "={{ $json['Recruiter Notes'] }}",
+            "Job Description": "={{ $json['Job Description'] }}",
+            "Resume File Name": "={{ $json['Resume File Name'] }}",
+            "Candidate Notified": "={{ $json['Candidate Notified'] }}",
+            "Decision Date": "={{ $json['Decision Date'] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Application ID",
+              "displayName": "Application ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Name",
+              "displayName": "Candidate Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Overall Match Score (%)",
+              "displayName": "Overall Match Score (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Review Priority",
+              "displayName": "Review Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recruiter Review Status",
+              "displayName": "Recruiter Review Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job ID",
+              "displayName": "Job ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Submitted At",
+              "displayName": "Submitted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Skills Match (%)",
+              "displayName": "Skills Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Experience Match (%)",
+              "displayName": "Experience Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Projects Match (%)",
+              "displayName": "Projects Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Certifications Match (%)",
+              "displayName": "Certifications Match (%)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Required Experience (Years)",
+              "displayName": "Required Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Experience (Years)",
+              "displayName": "Candidate Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Skills",
+              "displayName": "Candidate Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Matching Skills",
+              "displayName": "Matching Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Missing / Not Demonstrated Requirements",
+              "displayName": "Missing / Not Demonstrated Requirements",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Relevant Projects",
+              "displayName": "Relevant Projects",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "AI Screening Summary",
+              "displayName": "AI Screening Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recruiter Notes",
+              "displayName": "Recruiter Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Description",
+              "displayName": "Job Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Resume File Name",
+              "displayName": "Resume File Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Notified",
+              "displayName": "Candidate Notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Decision Date",
+              "displayName": "Decision Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "3aced553-bcb7-4c68-9d29-01c6ca800a48",
+      "name": "Save to Further Review Tab",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2976,
+        1216
+      ],
+      "notesInFlow": true,
+      "notes": "Score below 50: logged in the 'Further Review' tab. No auto-reject and no candidate email. A recruiter can still move the row manually."
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "sendTo": "recruiter@example.com",
+        "subject": "=[Action needed] Shortlist {{ $('Parse Analysis and Calculate Score').first().json.candidateName }} - {{ $('Parse Analysis and Calculate Score').first().json.jobTitle }} ({{ $('Parse Analysis and Calculate Score').first().json.matchScore }}/100)",
+        "message": "=AI Candidate Screening Report - ACTION NEEDED\n\nCandidate: {{ $('Parse Analysis and Calculate Score').first().json.candidateName }}\nEmail: {{ $('Parse Analysis and Calculate Score').first().json.candidateEmail }}\nJob: {{ $('Parse Analysis and Calculate Score').first().json.jobTitle }} ({{ $('Parse Analysis and Calculate Score').first().json.jobId }})\nRequired experience: {{ $('Parse Analysis and Calculate Score').first().json.requiredExperience }}\nCandidate experience (est. years): {{ $('Parse Analysis and Calculate Score').first().json.candidateExperienceYears }}\nOverall match score: {{ $('Parse Analysis and Calculate Score').first().json.matchScore }}/100\nReview category: {{ $('Parse Analysis and Calculate Score').first().json.reviewStatus }}\n\nScore breakdown:\n{{ $('Parse Analysis and Calculate Score').first().json.scoreBreakdownText }}\n\nSkills: {{ $('Parse Analysis and Calculate Score').first().json.skills }}\nMatching skills: {{ $('Parse Analysis and Calculate Score').first().json.matchingSkills }}\nMissing or not demonstrated requirements: {{ $('Parse Analysis and Calculate Score').first().json.missingOrUnverified }}\n\nExperience evidence: {{ $('Parse Analysis and Calculate Score').first().json.experienceEvidence }}\nProject evidence: {{ $('Parse Analysis and Calculate Score').first().json.projectEvidence }}\n\nSummary: {{ $('Parse Analysis and Calculate Score').first().json.reviewSummary }}\nQuestions for recruiter: {{ $('Parse Analysis and Calculate Score').first().json.recruiterQuestions }}\n\nResume file: {{ $('Parse Analysis and Calculate Score').first().json.resumeFileName }}\nApplication ID: {{ $('Parse Analysis and Calculate Score').first().json.applicationId }}\nFull report (see the 'Shortlisted' tab): https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_SPREADSHEET_ID/edit\n\nNEXT STEP: Review the original resume, then choose below.\n- Approve: the candidate is marked Shortlisted and receives a shortlist email automatically.\n- Decline: the candidate is marked Not Shortlisted and NO email is sent.\n\nIMPORTANT: This is AI-generated decision support, not a hiring decision. Final hiring decisions must remain with a human reviewer.",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "Approve - Shortlist"
+          }
+        },
+        "options": {}
+      },
+      "id": "4f7c9476-2ec9-4496-adef-379b2a575a09",
+      "name": "Recruiter Approval (Send and Wait)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3232,
+        784
+      ],
+      "webhookId": "",
+      "notesInFlow": true,
+      "notes": "Emails the recruiter (recruiter@example.com) with Approve / Decline buttons and pauses the workflow until they click. Human makes the final decision."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b75e1706-340d-4f69-82cf-2f588bb5de37",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "25b9c85d-f369-452b-acf6-7859a5dfdbcc",
+      "name": "Recruiter Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3504,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Analysis and Calculate Score').first().json.candidateEmail }}",
+        "subject": "=Your application for {{ $('Parse Analysis and Calculate Score').first().json.jobTitle }} - Optimity Logics",
+        "emailType": "text",
+        "message": "=Dear {{ $('Parse Analysis and Calculate Score').first().json.candidateName }},\n\nThank you for applying for the {{ $('Parse Analysis and Calculate Score').first().json.jobTitle }} position at Optimity Logics.\n\nWe are pleased to inform you that, after review by our recruitment team, your profile has been shortlisted for the next stage of our hiring process.\n\nOur team will contact you shortly with further details. Please keep an eye on your email and phone.\n\nBest regards,\nRecruitment Team\nOptimity Logics",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "3de411da-ff4a-42b2-94c1-490e81ed7198",
+      "name": "Email Candidate - Shortlisted",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3760,
+        672
+      ],
+      "webhookId": "",
+      "notesInFlow": true,
+      "notes": "Sent ONLY after the recruiter clicks Approve. Goes to the email the candidate typed in the form."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_SPREADSHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Recruiter",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_SPREADSHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Shortlisted"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Application ID": "={{ $('Parse Analysis and Calculate Score').first().json['Application ID'] }}",
+            "Recruiter Review Status": "Shortlisted",
+            "Candidate Notified": "Yes",
+            "Decision Date": "={{ $now.setZone('Asia/Kolkata').toFormat('dd LLL yyyy, hh:mm a') }}"
+          },
+          "matchingColumns": [
+            "Application ID"
+          ],
+          "schema": [
+            {
+              "id": "Application ID",
+              "displayName": "Application ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recruiter Review Status",
+              "displayName": "Recruiter Review Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Notified",
+              "displayName": "Candidate Notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Decision Date",
+              "displayName": "Decision Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "ca2e988d-7007-429c-a8f8-31aa6228d669",
+      "name": "Mark Shortlisted in Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4016,
+        672
+      ],
+      "notesInFlow": true,
+      "notes": "Updates the candidate's row (matched by Application ID): Status = Shortlisted, Candidate Notified = Yes."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_SPREADSHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Recruiter",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_SPREADSHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Shortlisted"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Application ID": "={{ $('Parse Analysis and Calculate Score').first().json['Application ID'] }}",
+            "Recruiter Review Status": "Not Shortlisted",
+            "Candidate Notified": "No",
+            "Decision Date": "={{ $now.setZone('Asia/Kolkata').toFormat('dd LLL yyyy, hh:mm a') }}"
+          },
+          "matchingColumns": [
+            "Application ID"
+          ],
+          "schema": [
+            {
+              "id": "Application ID",
+              "displayName": "Application ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recruiter Review Status",
+              "displayName": "Recruiter Review Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Notified",
+              "displayName": "Candidate Notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Decision Date",
+              "displayName": "Decision Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9667709a-ac9a-4a40-b17f-3131d195c3d8",
+      "name": "Mark Not Shortlisted in Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3760,
+        912
+      ],
+      "notesInFlow": true,
+      "notes": "Recruiter declined: Status = Not Shortlisted. No email is sent to the candidate."
+    }
+  ],
+  "connections": {
+    "Candidate Application Form": {
+      "main": [
+        [
+          {
+            "node": "Extract Resume Text from PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Resume Text from PDF": {
+      "main": [
+        [
+          {
+            "node": "Get Job Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job Details": {
+      "main": [
+        [
+          {
+            "node": "Prepare Screening Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Screening Prompt": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis and Calculate Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis and Calculate Score": {
+      "main": [
+        [
+          {
+            "node": "Shortlist Check (Score >= 50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shortlist Check (Score >= 50)": {
+      "main": [
+        [
+          {
+            "node": "Save to Shortlisted Tab",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Further Review Tab",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Shortlisted Tab": {
+      "main": [
+        [
+          {
+            "node": "Recruiter Approval (Send and Wait)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recruiter Approval (Send and Wait)": {
+      "main": [
+        [
+          {
+            "node": "Recruiter Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recruiter Approved?": {
+      "main": [
+        [
+          {
+            "node": "Email Candidate - Shortlisted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Not Shortlisted in Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Candidate - Shortlisted": {
+      "main": [
+        [
+          {
+            "node": "Mark Shortlisted in Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "triggerCount": 0,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
