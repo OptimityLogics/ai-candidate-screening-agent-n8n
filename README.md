@@ -29,7 +29,7 @@ This n8n workflow collects candidate details and a PDF resume, extracts resume t
 
 ## 6. Setup / Import Workflow JSON into n8n
 
-1. Download the workflow JSON export from the project files when available.
+1. Download `workflow.json` from this repository. It has been sanitized; reconnect credentials and replace spreadsheet placeholders before running.
 2. In n8n, select **Workflows → Import from File** and choose the JSON export.
 3. Reconnect Google Sheets, Gmail, and Gemini credentials.
 4. Replace placeholder spreadsheet and sheet references with your own values.
@@ -63,7 +63,7 @@ No formal test results are included in this repository; run the workflow with re
 
 ## 10. Documentation
 
-[Open the AI Candidate Screening Agent Documentation](AI_Candidate_Screening_Agent_-_Optimity_Logics.docx)
+[Open the project documentation](DOCUMENTATION.md)
 
 ## 11. Footer
 
