@@ -1,12 +1,8 @@
-# AI Candidate Screening Agent — Documentation
-
-> Source document text converted to Markdown for repository viewing. Layout and some table formatting from the original DOCX may differ.
-
 AI Candidate Screening Agent
    Recruitment screening automation · n8n workflow · Human approval
    21 October 2026
 
-   Optimity Logics | contact@example.com
+   Optimity Logics | info@optimitylogics.com
 
 
 The AI scores the resume, a person makes the decision
@@ -232,4 +228,4 @@ scanned PDF
     review, OCR for scanned resumes, duplicate checks, a reminder for pending approvals and clearer
     tab names.
 
-Optimity Logics | Email: contact@example.com
+Optimity Logics | Email: info@optimitylogics.com
