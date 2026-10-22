@@ -24,7 +24,7 @@ This n8n workflow collects candidate details and a PDF resume, extracts resume t
 - Google Gemini API access and an n8n credential
 - Google Sheets OAuth credential and a configured spreadsheet
 - Gmail OAuth credential
-- Job data and the expected review tabs in Google Sheets
+- Job data and the expected review tabs in Google Sheets (starter CSV templates are in `database/`)
 - Text-selectable PDF resumes; scanned PDFs may require OCR
 
 ## 6. Setup / Import Workflow JSON into n8n
